@@ -71,6 +71,19 @@ export async function checkQueueHealth(): Promise<ComponentHealth> {
 }
 
 /**
+ * Enqueues a plan expiry sweep job onto the BullMQ system queue
+ */
+export async function enqueuePlanExpiryJob(): Promise<void> {
+  try {
+    const queue = getSystemQueue();
+    await queue.add('plan-expiry-sweep', { action: 'plan-expiry-sweep', timestamp: new Date().toISOString() });
+    logger.info('Enqueued plan-expiry-sweep job onto BullMQ system queue');
+  } catch (err) {
+    logger.warn(`Could not enqueue plan-expiry-sweep job: ${(err as Error).message}`);
+  }
+}
+
+/**
  * Closes queues gracefully
  */
 export async function closeQueues(): Promise<void> {

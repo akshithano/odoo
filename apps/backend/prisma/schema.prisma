@@ -1,6 +1,6 @@
 // ==============================================================================
-// Prisma Schema - Foundation & Connectivity Verification
-// Note: Business tables are partitioned by member in database/migrations/
+// Prisma Schema - Subscription Management System
+// Member 1: Authentication, Identity, Products, Variants & Subscription Plans
 // ==============================================================================
 
 generator client {
@@ -12,11 +12,169 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Baseline system health verification model to assert DB connectivity
+// ------------------------------------------------------------------------------
+// Foundation & System Verification
+// ------------------------------------------------------------------------------
 model SystemHealth {
   id        String   @id @default(uuid())
   status    String   @default("HEALTHY")
   checkedAt DateTime @default(now()) @map("checked_at")
 
   @@map("system_health")
+}
+
+// ------------------------------------------------------------------------------
+// Member 1 Enums
+// ------------------------------------------------------------------------------
+enum Role {
+  ADMIN
+  STAFF
+  CUSTOMER
+}
+
+enum ProductType {
+  SERVICE
+  PHYSICAL
+  DIGITAL
+}
+
+enum BillingFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum PlanStatus {
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+// ------------------------------------------------------------------------------
+// Member 1: User Identity & Authentication
+// ------------------------------------------------------------------------------
+model User {
+  id                   String               @id @default(uuid())
+  email                String               @unique
+  passwordHash         String               @map("password_hash")
+  role                 Role                 @default(CUSTOMER)
+  firstName            String               @map("first_name")
+  lastName             String               @map("last_name")
+  isActive             Boolean              @default(true) @map("is_active")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  customer             Customer?
+  passwordResetTokens  PasswordResetToken[]
+
+  @@map("users")
+}
+
+model Customer {
+  id                  String   @id @default(uuid())
+  userId              String   @unique @map("user_id")
+  user                User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  companyName         String?  @map("company_name")
+  phone               String?
+  billingAddressLine1 String   @map("billing_address_line1")
+  billingCity         String   @map("billing_city")
+  billingState        String?  @map("billing_state")
+  billingPostalCode   String   @map("billing_postal_code")
+  billingCountry      String   @map("billing_country") // ISO 3166-1 alpha-2
+  defaultCurrency     String   @default("USD") @map("default_currency")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("customers")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_tokens")
+}
+
+// ------------------------------------------------------------------------------
+// Member 1: Product Catalog & Variants
+// ------------------------------------------------------------------------------
+model Product {
+  id            String           @id @default(uuid())
+  name          String
+  code          String           @unique
+  type          ProductType      @default(SERVICE)
+  description   String?
+  internalNotes String?          @map("internal_notes")
+  salesPrice    Decimal          @default(0.0000) @db.Decimal(14, 4) @map("sales_price")
+  costPrice     Decimal          @default(0.0000) @db.Decimal(14, 4) @map("cost_price")
+  isActive      Boolean          @default(true) @map("is_active")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  variants      ProductVariant[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id              String   @id @default(uuid())
+  productId       String   @map("product_id")
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantName     String   @map("variant_name")
+  sku             String   @unique
+  attributeName   String?  @map("attribute_name") // e.g. "Brand", "Storage"
+  attributeValue  String?  @map("attribute_value") // e.g. "Odoo", "Enterprise"
+  additionalPrice Decimal  @default(0.0000) @db.Decimal(14, 4) @map("additional_price")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("product_variants")
+}
+
+// ------------------------------------------------------------------------------
+// Member 1: Subscription Plans & Policies
+// ------------------------------------------------------------------------------
+model SubscriptionPlan {
+  id                 String           @id @default(uuid())
+  name               String
+  code               String           @unique
+  description        String?
+  billingFrequency   BillingFrequency @map("billing_frequency")
+  basePrice          Decimal          @default(0.0000) @db.Decimal(14, 4) @map("base_price")
+  currency           String           @default("USD")
+  minimumQuantity    Int              @default(1) @map("minimum_quantity")
+  validFrom          DateTime?        @map("valid_from")
+  validUntil         DateTime?        @map("valid_until")
+  autoCloseOnExpiry  Boolean          @default(true) @map("auto_close_on_expiry")
+  allowEarlyClosure  Boolean          @default(true) @map("allow_early_closure")
+  allowPause         Boolean          @default(true) @map("allow_pause")
+  allowRenewal       Boolean          @default(true) @map("allow_renewal")
+  status             PlanStatus       @default(ACTIVE)
+  isActive           Boolean          @default(true) @map("is_active")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  @@map("plans")
+}
+
+// ------------------------------------------------------------------------------
+// Member 1: Multi-Currency Configuration
+// ------------------------------------------------------------------------------
+model Currency {
+  code               String   @id // USD, EUR, INR, GBP
+  name               String
+  symbol             String
+  exchangeRateToBase Decimal  @default(1.000000) @db.Decimal(14, 6) @map("exchange_rate_to_base")
+  isBaseCurrency     Boolean  @default(false) @map("is_base_currency")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("currencies")
 }

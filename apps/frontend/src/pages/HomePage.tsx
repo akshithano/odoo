@@ -8,17 +8,26 @@ export const HomePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const isMountedRef = React.useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchHealth = async () => {
     setLoading(true);
     setError(null);
     try {
       const response = await apiClient.get<ApiResponse<HealthCheckResult>>('/health');
-      setHealthData(response.data.data);
+      if (isMountedRef.current) setHealthData(response.data.data);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unable to connect to backend service';
-      setError(message);
+      if (isMountedRef.current) setError(message);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   };
 
@@ -176,11 +185,25 @@ export const HomePage: React.FC = () => {
                 variants, and plans.
               </p>
             </div>
-            <div className="mt-4 pt-3 border-t border-slate-100 text-xs font-medium text-blue-600">
-              Assigned Module Directory:{' '}
-              <code className="block text-[11px] mt-1 text-slate-700">
-                apps/frontend/src/modules/member1_auth
-              </code>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap gap-2">
+              <a
+                href="/products"
+                className="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md border border-indigo-200 transition-colors"
+              >
+                Products & Variants
+              </a>
+              <a
+                href="/plans"
+                className="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md border border-indigo-200 transition-colors"
+              >
+                Subscription Plans
+              </a>
+              <a
+                href="/users"
+                className="px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-200 transition-colors"
+              >
+                Users & RBAC
+              </a>
             </div>
           </div>
 
