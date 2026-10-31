@@ -3,6 +3,7 @@ export enum PaymentStatus {
   SUCCESS = 'SUCCESS',
   FAILED = 'FAILED',
   REFUNDED = 'REFUNDED',
+  PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
 }
 
 export enum PaymentMethod {
@@ -10,4 +11,18 @@ export enum PaymentMethod {
   BANK_WIRE = 'BANK_WIRE',
   CASH = 'CASH',
   GATEWAY = 'GATEWAY',
+  RAZORPAY = 'RAZORPAY',
+  STRIPE = 'STRIPE',
+}
+
+export enum DiscountType {
+  FIXED = 'FIXED',
+  PERCENTAGE = 'PERCENTAGE',
+}
+
+export enum RetryStatus {
+  PENDING = 'PENDING',
+  SUCCESS = 'SUCCESS',
+  FAILED = 'FAILED',
+  ABANDONED = 'ABANDONED',
 }

@@ -497,25 +497,482 @@ When implementing business logic in future phases, each member mounts routes str
 - **Request Body:** `{ "amount": 100, "fromCurrency": "USD", "toCurrency": "INR" }`
 - **Response `200 OK`:** `{ "convertedAmount": 8650.00 }`
 
-### Member 2: Quotations, Subscriptions, Pricing & Usage (`/api/v1/quotations`, `/api/v1/subscriptions`, `/api/v1/usage`)
+### Member 2: Quotations, Subscriptions, Pricing & Usage (`/api/v1/quotation-templates`, `/api/v1/quotations`, `/api/v1/subscriptions`, `/api/v1/pricing`, `/api/v1/usage`)
 
-- `GET/POST /api/v1/quotations` (Quotation templates and validity)
-- `POST /api/v1/quotations/:id/convert` (One-click quote-to-subscription)
-- `GET/POST /api/v1/subscriptions` (Subscription state machine)
-- `POST /api/v1/subscriptions/:id/upgrade` (Mid-cycle proration calculation & plan switch)
-- `POST /api/v1/subscriptions/:id/pause` / `resume` / `cancel`
-- `POST /api/v1/usage/events` (Usage consumption ingestion with `Idempotency-Key`)
+#### 1. Quotation Templates
+##### `GET /api/v1/quotation-templates`
+- **Purpose:** List reusable quotation templates with bundled lines.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Response `200 OK`:** Array of quotation template entities with `lines` populated.
 
-### Member 3: Invoicing, Taxes, Discounts & Payments (`/api/v1/invoices`, `/api/v1/tax-rules`, `/api/v1/discounts`, `/api/v1/payments`)
+##### `POST /api/v1/quotation-templates`
+- **Purpose:** Create a reusable quotation template.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Request Body:**
+  ```json
+  {
+    "name": "Enterprise Cloud Bundle",
+    "description": "Standard SaaS deployment with cloud backup",
+    "defaultValidityDays": 30,
+    "lines": [
+      { "productId": "prod_uuid", "quantity": 1, "unitPrice": 1000.0, "taxRate": 18.0 }
+    ]
+  }
+  ```
+- **Response `201 Created`:** Created quotation template object.
 
-- `POST /api/v1/invoices/generate-cycle` (Idempotent recurring billing run)
-- `GET /api/v1/invoices` & `GET /api/v1/invoices/:id`
-- `GET /api/v1/invoices/:id/pdf` (Dynamic PDF generator)
-- `POST /api/v1/invoices/:id/confirm` (Freeze snapshot & tax application)
-- `POST /api/v1/tax-rules` (Admin tax configuration)
-- `POST /api/v1/discounts` (Admin coupon builder with concurrency limits)
-- `POST /api/v1/payments` (Manual payment recording)
-- `POST /api/v1/payments/webhook` (Stripe/Razorpay webhook with HMAC signature verification)
+##### `GET /api/v1/quotation-templates/:id`
+- **Purpose:** Retrieve quotation template details by ID.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+#### 2. Quotation Lifecycles & Conversion
+##### `GET /api/v1/quotations`
+- **Purpose:** List quotations with customer isolation filtering.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` for own).
+- **Query Params:** `page`, `limit`, `status`, `customerId`.
+- **Response `200 OK`:** Paginated quotation list with subtotal, tax amount, and validity dates.
+
+##### `POST /api/v1/quotations`
+- **Purpose:** Create custom quotation with line items and validity window.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Request Body:**
+  ```json
+  {
+    "customerId": "cust_uuid",
+    "planId": "plan_uuid",
+    "validDays": 30,
+    "paymentTerms": "NET_30",
+    "lines": [
+      { "productId": "prod_uuid", "variantId": "var_uuid", "quantity": 2, "unitPrice": 500.0, "taxRate": 18.0 }
+    ]
+  }
+  ```
+- **Response `201 Created`:** Created quotation with auto-generated quotation number (e.g. `QTN-202610-0001`).
+
+##### `GET /api/v1/quotations/:id`
+- **Purpose:** Retrieve full quotation details with calculated subtotals, tax breakdown, and lines.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` with data isolation).
+
+##### `POST /api/v1/quotations/:id/send`
+- **Purpose:** Mark quotation as `SENT` to customer.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/quotations/:id/accept`
+- **Purpose:** Accept quotation terms (`ACCEPTED`).
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+
+##### `POST /api/v1/quotations/:id/reject`
+- **Purpose:** Reject or mark quote as declined.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+
+##### `POST /api/v1/quotations/:id/convert`
+- **Purpose:** One-click conversion of accepted quotation into an active subscription.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Response `201 Created`:** Returns created `subscription` entity and updates quotation status to `CONVERTED`.
+- **Errors:** `409 Conflict` (Quotation already converted or invalid state).
+
+#### 3. Subscription Lifecycles & State Machine
+##### `GET /api/v1/subscriptions`
+- **Purpose:** Query subscriptions with role-based filtering (Customers restricted to own).
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER`).
+- **Query Params:** `status`, `customerId`, `page`, `limit`.
+
+##### `POST /api/v1/subscriptions`
+- **Purpose:** Create a new subscription contract.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Request Body:**
+  ```json
+  {
+    "customerId": "cust_uuid",
+    "planId": "plan_uuid",
+    "paymentTerms": "NET_30",
+    "billingFrequency": "MONTHLY",
+    "startDate": "2026-11-01T00:00:00Z",
+    "lines": [
+      { "productId": "prod_uuid", "quantity": 1, "unitPrice": 1000.0, "taxRate": 18.0 }
+    ]
+  }
+  ```
+- **Response `201 Created`:** Created subscription with formatted number (e.g. `SUB-202611-0001`).
+
+##### `GET /api/v1/subscriptions/:id`
+- **Purpose:** Get detailed subscription specification, active period timestamps, lines, and customer details.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+
+##### `PUT /api/v1/subscriptions/:id`
+- **Purpose:** Update editable subscription attributes (payment terms, auto-renew, line quantities).
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/subscriptions/:id/confirm`
+- **Purpose:** Transition subscription from `DRAFT` / `QUOTATION` to `CONFIRMED`.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/subscriptions/:id/activate`
+- **Purpose:** Activate subscription (`ACTIVE`).
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/subscriptions/:id/pause`
+- **Purpose:** Pause active subscription, suspending recurring usage billing (`PAUSED`).
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/subscriptions/:id/resume`
+- **Purpose:** Resume paused subscription back to `ACTIVE`.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/subscriptions/:id/renew`
+- **Purpose:** Advance subscription period dates by billing frequency interval.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/subscriptions/:id/close`
+- **Purpose:** Early termination / closure of subscription (`CLOSED`). Dispatches asynchronous trigger to Member 4 exit survey.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Errors:** `422 Unprocessable` (Subscription already closed).
+
+##### `POST /api/v1/subscriptions/:id/preview-upgrade`
+- **Purpose:** Real-time proration calculator previewing unused credit and new plan debit.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Request Body:** `{ "newPlanId": "plan_pro_uuid", "effectiveDate": "2026-10-16T00:00:00Z" }`
+- **Response `200 OK`:**
+  ```json
+  {
+    "subscriptionId": "sub_uuid",
+    "currentPlan": { "id": "p1", "name": "Basic", "basePrice": 1000.0 },
+    "newPlan": { "id": "p2", "name": "Pro", "basePrice": 2000.0 },
+    "daysRemaining": 15,
+    "totalDaysInCycle": 30,
+    "unusedCredit": 500.0,
+    "newCharge": 1000.0,
+    "netAdjustment": 500.0
+  }
+  ```
+
+##### `POST /api/v1/subscriptions/:id/upgrade`
+- **Purpose:** Execute mid-cycle plan switch, record immutable subscription change audit, and adjust billing.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Response `200 OK`:** Updated subscription entity and created `subscriptionChange` audit record.
+
+##### `GET /api/v1/subscriptions/:id/history`
+- **Purpose:** Immutable audit timeline of lifecycle transitions and manual updates.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `GET /api/v1/subscriptions/:id/changes`
+- **Purpose:** Query mid-cycle upgrade/downgrade change logs and proration financial balances.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+
+#### 4. Advanced Tiered & Graduated Pricing Engine
+##### `GET /api/v1/pricing/tiers`
+- **Purpose:** Fetch configured pricing brackets for a plan or product.
+- **Access:** Authenticated (`ADMIN`, `STAFF`).
+- **Query Params:** `planId`, `productId`, `tierType` (`QUANTITY_BASED` | `USAGE_BASED`).
+
+##### `POST /api/v1/pricing/tiers`
+- **Purpose:** Create single pricing tier bracket.
+- **Access:** Private (`ADMIN` only).
+
+##### `POST /api/v1/pricing/tiers/bulk`
+- **Purpose:** Atomically replace and configure bracket slabs for graduated/volume pricing.
+- **Access:** Private (`ADMIN` only).
+- **Request Body:**
+  ```json
+  {
+    "planId": "plan_uuid",
+    "tierType": "QUANTITY_BASED",
+    "modelType": "GRADUATED",
+    "tiers": [
+      { "minQuantity": 1, "maxQuantity": 10, "unitPrice": 100.0 },
+      { "minQuantity": 11, "maxQuantity": 50, "unitPrice": 80.0 },
+      { "minQuantity": 51, "maxQuantity": null, "unitPrice": 50.0 }
+    ]
+  }
+  ```
+
+##### `POST /api/v1/pricing/calculate`
+- **Purpose:** Simulate or compute exact charge based on quantity and graduated/volume models.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER`).
+- **Request Body:** `{ "quantity": 25, "modelType": "GRADUATED", "tiers": [...] }`
+- **Response `200 OK`:**
+  ```json
+  {
+    "modelType": "GRADUATED",
+    "totalQuantity": 25,
+    "totalCalculatedPrice": 2200.0,
+    "effectiveUnitPrice": 88.0,
+    "brackets": [
+      { "tierNumber": 1, "applicableQuantity": 10, "unitPrice": 100.0, "bracketTotal": 1000.0 },
+      { "tierNumber": 2, "applicableQuantity": 15, "unitPrice": 80.0, "bracketTotal": 1200.0 }
+    ]
+  }
+  ```
+
+#### 5. Usage-Based Metering & Consumption Ledger
+##### `POST /api/v1/usage/events`
+- **Purpose:** High-throughput consumption event ingestion with atomic idempotency deduplication.
+- **Access:** Private (`ADMIN`, `STAFF`, API Service Keys).
+- **Request Body:**
+  ```json
+  {
+    "subscriptionId": "sub_uuid",
+    "usageType": "api_calls",
+    "quantity": 1500,
+    "unitOfMeasure": "calls",
+    "timestamp": "2026-10-31T12:00:00Z",
+    "idempotencyKey": "evt_20261031_001",
+    "notes": "Query batch run"
+  }
+  ```
+- **Response `202 Accepted`:** Event accepted and committed to ledger.
+- **Errors:** `409 Conflict` (Duplicate `idempotencyKey`), `404 Not Found` (Unknown subscription).
+
+##### `GET /api/v1/usage/events`
+- **Purpose:** Query raw consumption event history with pagination and date range filtering.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+
+##### `GET /api/v1/usage/subscriptions/:id/summary`
+- **Purpose:** Aggregates consumption metrics across billing window and computes tiered charges for Member 3 recurring invoicing.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Response `200 OK`:** Summary of all unbilled metrics grouped by `usageType` with pricing tier calculations.
+
+### Member 3: Invoicing, Taxes, Discounts & Payments (`/api/v1/invoices`, `/api/v1/tax-rules`, `/api/v1/discounts`, `/api/v1/payments`, `/api/v1/refunds`)
+
+#### 1. Invoices Lifecycle & Scheduled Billing Engine
+
+##### `POST /api/v1/invoices/generate-cycle`
+- **Purpose:** Idempotent recurring billing engine evaluating active subscriptions due for billing up to `asOfDate`. Enforces `UNIQUE(subscription_id, billing_period_start)`.
+- **Access:** Private (`ADMIN`, `STAFF`, Background Worker Token).
+- **Request Body:**
+  ```json
+  {
+    "asOfDate": "2026-11-01T00:00:00Z",
+    "subscriptionId": "sub_uuid_optional"
+  }
+  ```
+- **Response `200 OK`:**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "subscriptionsEvaluated": 142,
+      "invoicesCreated": 38,
+      "invoicesSkippedAlreadyBilled": 104,
+      "totalBilledAmount": 18450.00,
+      "invoiceIds": ["inv_uuid_1", "inv_uuid_2"]
+    }
+  }
+  ```
+
+##### `GET /api/v1/invoices`
+- **Purpose:** Query invoices with pagination, status filters, date range, and customer tenant isolation.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` restricted to own).
+- **Query Params:** `status`, `customerId`, `subscriptionId`, `search`, `page`, `limit`, `startDate`, `endDate`.
+- **Response `200 OK`:** Paginated invoices list with totals, amount paid, and status.
+
+##### `GET /api/v1/invoices/:id`
+- **Purpose:** Retrieve invoice details with lines, frozen customer snapshot, taxes, applied discounts, and payment history.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+
+##### `GET /api/v1/invoices/:id/pdf`
+- **Purpose:** Dynamic printable HTML / document representation of the invoice.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Response `200 OK`:** `text/html` document formatted for print/export.
+
+##### `POST /api/v1/invoices/:id/confirm`
+- **Purpose:** Freezes draft invoice, applies discounts and taxes, locks immutable customer snapshot, and transitions status to `CONFIRMED`.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Request Body:** `{ "discountCode": "PROMO20" }` (optional).
+- **Response `200 OK`:** Returns confirmed invoice object.
+- **Errors:** `422 Unprocessable` (Invoice is not in `DRAFT` status).
+
+##### `PUT /api/v1/invoices/:id`
+- **Purpose:** Edit draft invoice notes, due dates, or line items.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Errors:** `422 Unprocessable` (Only `DRAFT` invoices can be edited).
+
+##### `POST /api/v1/invoices/:id/cancel`
+- **Purpose:** Cancel an invoice.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Errors:** `422 Unprocessable` (Paid invoices cannot be cancelled).
+
+##### `GET /api/v1/invoices/overdue`
+- **Purpose:** List overdue invoices with aging breakdown and dunning status (integration endpoint for Member 4 aging report).
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Response `200 OK`:**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "totalOverdueCount": 12,
+      "totalOutstandingAmount": 4850.00,
+      "invoices": [
+        {
+          "id": "inv_uuid",
+          "invoiceNumber": "INV-202610-0015",
+          "customerName": "Acme Corp",
+          "dueDate": "2026-10-15T00:00:00Z",
+          "overdueDays": 16,
+          "outstandingBalance": 500.00
+        }
+      ]
+    }
+  }
+  ```
+
+##### `POST /api/v1/invoices/mark-overdue`
+- **Purpose:** Sweep worker identifying invoices past due with balance > 0 and transitioning status to `OVERDUE`.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+#### 2. Tax Configuration & Calculation Engine
+
+##### `GET /api/v1/tax-rules`
+- **Purpose:** List active or all tax rules.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER`).
+
+##### `POST /api/v1/tax-rules`
+- **Purpose:** Create percentage-based or compound tax rule.
+- **Access:** Private (`ADMIN` only).
+- **Request Body:**
+  ```json
+  {
+    "name": "GST 18%",
+    "ratePercentage": 18.00,
+    "country": "IN",
+    "state": null,
+    "isCompound": false
+  }
+  ```
+- **Response `201 Created`:** Created tax rule entity.
+
+##### `PUT /api/v1/tax-rules/:id`
+- **Purpose:** Update tax rule configuration.
+- **Access:** Private (`ADMIN` only).
+
+##### `PATCH /api/v1/tax-rules/:id/toggle-active`
+- **Purpose:** Toggle active/inactive state of a tax rule.
+- **Access:** Private (`ADMIN` only).
+
+##### `POST /api/v1/tax-rules/calculate`
+- **Purpose:** Simulate or compute exact tax for an amount, taking compound rules into account.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER`).
+
+#### 3. Discount Management & Atomic Redemption
+
+##### `GET /api/v1/discounts`
+- **Purpose:** List configured discount rules and redemption statistics.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/discounts`
+- **Purpose:** Create discount coupon with eligibility requirements and redemption bounds.
+- **Access:** Private (`ADMIN` only).
+- **Request Body:**
+  ```json
+  {
+    "code": "SUMMER25",
+    "type": "PERCENTAGE",
+    "value": 25.00,
+    "minPurchaseAmount": 100.00,
+    "minQuantity": 1,
+    "maxRedemptions": 100,
+    "maxPerCustomer": 1,
+    "startDate": "2026-06-01T00:00:00Z",
+    "endDate": "2026-08-31T23:59:59Z"
+  }
+  ```
+- **Response `201 Created`:** Created discount rule.
+
+##### `POST /api/v1/discounts/validate`
+- **Purpose:** Test and validate discount eligibility before redemption.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER`).
+- **Request Body:**
+  ```json
+  {
+    "code": "SUMMER25",
+    "customerId": "cust_uuid",
+    "purchaseAmount": 200.00
+  }
+  ```
+- **Response `200 OK`:** `{ "discountAmount": 50.00, "newTotal": 150.00 }`.
+
+#### 4. Payment Processing & Gateway Webhooks
+
+##### `POST /api/v1/payments`
+- **Purpose:** Record manual offline payment (bank wire, card, cash, check).
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Request Body:**
+  ```json
+  {
+    "invoiceId": "inv_uuid",
+    "amount": 250.00,
+    "paymentMethod": "BANK_WIRE",
+    "paymentDate": "2026-10-31T12:00:00Z",
+    "transactionReference": "WIRE-REF-998877",
+    "notes": "Verified in bank statement"
+  }
+  ```
+- **Response `201 Created`:** Payment record. Updates invoice `amountPaid` and marks `PAID` or `PARTIALLY_PAID`.
+
+##### `POST /api/v1/payments/create-order`
+- **Purpose:** Initiate online checkout order with payment gateway (Razorpay / Mock).
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Request Body:** `{ "invoiceId": "inv_uuid" }`
+- **Response `200 OK`:** `{ "orderId": "order_rzp_12345", "amount": 250.00, "currency": "USD", "keyId": "rzp_test_..." }`
+
+##### `POST /api/v1/payments/verify`
+- **Purpose:** Verify cryptographic HMAC signature from gateway and record payment.
+- **Access:** Authenticated (`ADMIN`, `STAFF`, `CUSTOMER` own).
+- **Request Body:**
+  ```json
+  {
+    "invoiceId": "inv_uuid",
+    "orderId": "order_rzp_12345",
+    "paymentId": "pay_rzp_998877",
+    "signature": "hmac_sha256_signature_hex"
+  }
+  ```
+- **Response `200 OK`:** Verified payment record.
+
+##### `POST /api/v1/payments/webhook`
+- **Purpose:** Asynchronous payment notification from gateway.
+- **Access:** Public endpoint guarded by Cryptographic Signature Header (`X-Razorpay-Signature`).
+- **Headers:** `X-Razorpay-Signature: <hmac_hex>`
+- **Request Body:** Gateway webhook event payload.
+- **Response `200 OK`:** `{ "received": true }` (Idempotently handles duplicate webhooks via `webhook_events` table).
+
+#### 5. Smart Dunning Retries & Refund Management
+
+##### `GET /api/v1/payments/retries`
+- **Purpose:** Query retry history across invoices.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/payments/retries/:invoiceId/manual`
+- **Purpose:** Manually trigger dunning card retry. Escalates and pauses subscription after 4 consecutive failures.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+##### `POST /api/v1/refunds`
+- **Purpose:** Process full or partial refund against recorded payment.
+- **Access:** Private (`ADMIN`, `STAFF`).
+- **Request Body:**
+  ```json
+  {
+    "paymentId": "pay_uuid",
+    "amount": 100.00,
+    "reason": "Overcharge refund"
+  }
+  ```
+- **Response `201 Created`:** Refund record. Updates payment status to `PARTIALLY_REFUNDED` or `REFUNDED` and recalculates invoice balance.
+
+##### `GET /api/v1/refunds`
+- **Purpose:** Query refund transaction ledger.
+- **Access:** Private (`ADMIN`, `STAFF`).
+
+---
+
+#### 6. Cross-Member Integration Contracts for Member 4
+
+Member 3 exposes the following integration endpoints and data structures for Member 4's analytics, dashboard, fraud detection, and audit modules:
+1. **Financial MRR / ARR Metrics:** `GET /api/v1/invoices` with `status=PAID` aggregates recognized revenue.
+2. **Receivables Aging Report:** `GET /api/v1/invoices/overdue` returns grouped aging brackets (0-30, 31-60, 61-90, 90+ days) and outstanding debt.
+3. **Account Health Degradation Trigger:** When dunning retries fail 4 consecutive times, Member 3 triggers BullMQ job `subscription-paused` with reason `DUNNING_EXHAUSTED` so Member 4 can degrade account health score.
+4. **Refund & Chargeback Fraud Telemetry:** `GET /api/v1/refunds` supplies transaction timestamps, payment IDs, and customer IDs to Member 4's 8-rule fraud engine.
+5. **Customer Isolation Standard:** All customer queries enforce tenant isolation checking `req.user.customerId`. Unauthorized cross-tenant queries return `404 Not Found`.
 
 ### Member 4: Operations, Analytics, Fraud & Audits (`/api/v1/analytics`, `/api/v1/fraud`, `/api/v1/health-scores`, `/api/v1/audit`, `/api/v1/surveys`)
 

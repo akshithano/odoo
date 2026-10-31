@@ -2,6 +2,7 @@ export enum InvoiceStatus {
   DRAFT = 'DRAFT',
   CONFIRMED = 'CONFIRMED',
   PAID = 'PAID',
+  PARTIALLY_PAID = 'PARTIALLY_PAID',
   OVERDUE = 'OVERDUE',
   CANCELLED = 'CANCELLED',
 }
