@@ -1,0 +1,8 @@
+# Prettier Ignore
+node_modules/
+dist/
+build/
+coverage/
+package-lock.json
+TEAM_FEATURE_ALLOCATION.md
+apps/backend/prisma/*.db

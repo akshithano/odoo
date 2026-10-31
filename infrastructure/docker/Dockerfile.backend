@@ -1,0 +1,56 @@
+# ==============================================================================
+# Backend Dockerfile - Node.js Express API
+# ==============================================================================
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy root package manifests and workspace packages
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/backend/package.json ./apps/backend/
+
+# Install dependencies across workspaces
+RUN npm ci
+
+# Copy sources
+COPY packages/shared/ ./packages/shared/
+COPY apps/backend/ ./apps/backend/
+
+# Build shared package
+RUN npm run build --workspace=@odoo/shared
+
+# Generate Prisma Client
+WORKDIR /app/apps/backend
+RUN npx prisma generate
+
+# Build backend
+RUN npm run build
+
+# Runtime Stage
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Install openssl for Prisma runtime
+RUN apk add --no-cache openssl
+
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/backend/package.json ./apps/backend/
+
+# Install production dependencies only
+RUN npm ci --omit=dev
+
+# Copy built outputs
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/apps/backend/dist ./apps/backend/dist
+COPY --from=builder /app/apps/backend/prisma ./apps/backend/prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+EXPOSE 5001
+
+CMD ["node", "apps/backend/dist/server.js"]

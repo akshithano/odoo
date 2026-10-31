@@ -1,0 +1,98 @@
+services:
+  # ============================================================================
+  # Persistence: PostgreSQL 16
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: odoo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-odoo_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-odoo_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-odoo_subscription_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-odoo_user} -d ${POSTGRES_DB:-odoo_subscription_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - odoo_net
+
+  # ============================================================================
+  # In-Memory Cache & Job Queue Broker: Redis 7
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: odoo_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - odoo_net
+
+  # ============================================================================
+  # Application Backend: Node.js Express API
+  # ============================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+    container_name: odoo_backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      BACKEND_PORT: 5001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-odoo_user}:${POSTGRES_PASSWORD:-odoo_secure_password}@postgres:5432/${POSTGRES_DB:-odoo_subscription_db}?schema=public
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FRONTEND_URL: http://localhost:${FRONTEND_PORT:-3000}
+      JWT_SECRET: ${JWT_SECRET:-production_secure_secret_must_be_configured}
+    ports:
+      - "${BACKEND_PORT:-5001}:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - odoo_net
+
+  # ============================================================================
+  # Application Frontend: React 18 SPA (Nginx)
+  # ============================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend
+    container_name: odoo_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    networks:
+      - odoo_net
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  odoo_net:
+    driver: bridge
