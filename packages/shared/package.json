@@ -2,6 +2,7 @@
   "name": "@odoo/shared",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Shared TypeScript types, enums, and API contracts for Subscription Management System",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,12 +1,14 @@
 import { Worker, Job } from 'bullmq';
 import { queueConnectionOptions, SYSTEM_QUEUE_NAME } from './queue.js';
 import { logger } from '../logging/logger.js';
+import { executePlanExpirySweep } from '../../modules/auth_catalog/services/planExpiry.worker.js';
 
 let systemWorker: Worker | null = null;
 
 export interface SystemJobData {
-  action: 'ping' | 'verify';
-  timestamp: string;
+  action?: 'ping' | 'verify' | 'plan-expiry-sweep';
+  timestamp?: string;
+  [key: string]: unknown;
 }
 
 /**
@@ -21,9 +23,13 @@ export function startWorkers(): void {
   systemWorker = new Worker<SystemJobData>(
     SYSTEM_QUEUE_NAME,
     async (job: Job<SystemJobData>) => {
-      logger.info(`[Worker] Processing foundation job ${job.id} (${job.name})`, { data: job.data });
+      logger.info(`[Worker] Processing job ${job.id} (${job.name})`, { data: job.data });
       if (job.name === 'ping') {
         return { status: 'pong', timestamp: new Date().toISOString() };
+      }
+      if (job.name === 'plan-expiry-sweep' || job.data?.action === 'plan-expiry-sweep') {
+        const closedCount = await executePlanExpirySweep();
+        return { status: 'completed', action: 'plan-expiry-sweep', closedCount };
       }
       return { status: 'processed', jobId: job.id };
     },
