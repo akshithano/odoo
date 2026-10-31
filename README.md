@@ -1,7 +1,6 @@
 # Subscription Operations & Billing Platform (OdooSub)
 
 > **Enterprise Subscription Management System**  
-> **Final Year B.Tech CSE Capstone Project**  
 > **Architecture:** Modular Monolith with npm Workspaces  
 > **Feature Allocation Blueprint:** [TEAM_FEATURE_ALLOCATION.md](TEAM_FEATURE_ALLOCATION.md)  
 > **API Contracts:** [docs/API_CONTRACTS.md](docs/API_CONTRACTS.md)
